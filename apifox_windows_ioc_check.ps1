@@ -1,15 +1,125 @@
-param(
+﻿param(
     [int]$LogLookbackDays = 30,
-    [int]$DnsLogMaxEvents = 4000
+    [int]$DnsLogMaxEvents = 4000,
+    [ValidateSet("Auto", "UTF8", "GB2312", "GBK", "OEM", "Default")]
+    [string]$OutputEncodingName = "Auto"
 )
 
 $ErrorActionPreference = "SilentlyContinue"
 
-try {
-    [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
-} catch {
+function Register-CodePageProvider {
+    try {
+        [System.Text.Encoding]::RegisterProvider([System.Text.CodePagesEncodingProvider]::Instance)
+    } catch {
+    }
 }
 
+function Resolve-TextEncoding {
+    param([string]$Name)
+
+    if ([string]::IsNullOrWhiteSpace($Name)) {
+        return $null
+    }
+
+    switch ($Name.ToUpperInvariant()) {
+        "UTF8" {
+            return New-Object System.Text.UTF8Encoding($false)
+        }
+        "GB2312" {
+            try {
+                return [System.Text.Encoding]::GetEncoding("GB2312")
+            } catch {
+            }
+            try {
+                return [System.Text.Encoding]::GetEncoding(936)
+            } catch {
+            }
+            return $null
+        }
+        "GBK" {
+            try {
+                return [System.Text.Encoding]::GetEncoding(936)
+            } catch {
+            }
+            return $null
+        }
+        "OEM" {
+            try {
+                return [System.Text.Encoding]::GetEncoding([System.Globalization.CultureInfo]::CurrentCulture.TextInfo.OEMCodePage)
+            } catch {
+            }
+            return $null
+        }
+        "DEFAULT" {
+            try {
+                return [System.Text.Encoding]::Default
+            } catch {
+            }
+            return $null
+        }
+        default {
+            try {
+                return [System.Text.Encoding]::GetEncoding($Name)
+            } catch {
+            }
+            return $null
+        }
+    }
+}
+
+function Initialize-ConsoleEncoding {
+    param([string]$PreferredName)
+
+    Register-CodePageProvider
+
+    $encoding = $null
+
+    if ($PreferredName -and $PreferredName -ne "Auto") {
+        $encoding = Resolve-TextEncoding -Name $PreferredName
+    }
+
+    if ($null -eq $encoding) {
+        try {
+            $ansiCodePage = [System.Globalization.CultureInfo]::CurrentCulture.TextInfo.ANSICodePage
+            if ($ansiCodePage -eq 936) {
+                $encoding = Resolve-TextEncoding -Name "GB2312"
+            }
+        } catch {
+        }
+    }
+
+    if ($null -eq $encoding) {
+        try {
+            if ($null -ne [Console]::OutputEncoding) {
+                $encoding = [Console]::OutputEncoding
+            }
+        } catch {
+        }
+    }
+
+    if ($null -eq $encoding) {
+        $encoding = New-Object System.Text.UTF8Encoding($false)
+    }
+
+    try {
+        [Console]::InputEncoding = $encoding
+    } catch {
+    }
+
+    try {
+        [Console]::OutputEncoding = $encoding
+    } catch {
+    }
+
+    try {
+        Set-Variable -Name OutputEncoding -Scope Global -Value $encoding
+    } catch {
+    }
+
+    return $encoding
+}
+
+$SelectedOutputEncoding = Initialize-ConsoleEncoding -PreferredName $OutputEncodingName
 $ScriptVersion = "1.0"
 $CompromiseStart = "2026-03-04"
 $CompromiseEnd = "2026-03-22"
@@ -124,6 +234,9 @@ function Show-SystemInfo {
     Write-Info ("主机名: {0}" -f $env:COMPUTERNAME)
     Write-Info ("用户: {0}" -f $env:USERNAME)
     Write-Info ("系统: {0}" -f [System.Environment]::OSVersion.VersionString)
+    if ($null -ne $SelectedOutputEncoding) {
+        Write-Info ("控制台编码: {0} (CodePage={1})" -f $SelectedOutputEncoding.WebName, $SelectedOutputEncoding.CodePage)
+    }
     Write-Info ("重点时间窗: {0} 至 {1}" -f $CompromiseStart, $CompromiseEnd)
 }
 
